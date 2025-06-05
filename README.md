@@ -9,36 +9,7 @@ This repository contains a Docker Compose configuration to run both the Masumi R
 
 ## Setup Instructions
 
-1. Copy the environment file template and fill in your values:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit the `.env` file and set the following variables:
-
-   - `ADMIN_KEY`: A minimum 15-character secure admin key for both services
-   - `ENCRYPTION_KEY`: A minimum 20-character encryption key for the payment service database
-   - `BLOCKFROST_API_KEY_PREPROD`: Your Blockfrost API key for preprod network
-
-   **Optionally**
-
-   - `PURCHASE_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet used to purchase any agent requests. This needs to have sufficient funds to pay, or be topped up. If you do not provide a mnemonic, a new one will be generated. Please ensure you export them immediately after creation and store them securely.
-   - `SELLING_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet used to interact with the smart contract. This only needs minimal funds, to cover the CARDANO Network fees. If you do not provide a mnemonic, a new one will be generated. Please ensure you export them immediately after creation and store them securely.
-   - `COLLECTION_WALLET_PREPROD_ADDRESS`: The wallet address of the collection wallet. It will receive all payments after a successful and completed purchase (not refund). It does not need any funds, however it is strongly recommended to create it via a hardware wallet or ensure its secret is stored securely. If you do not provide an address, the SELLING_WALLET will be used.
-
-3. Start the services:
-
-   ```bash
-   docker compose up -d
-   ```
-
-   The services will automatically:
-
-   - Create the required databases
-   - Run database migrations
-   - Seed the databases only if they are empty
-   - Start the services
+For detailed setup instructions, please refer to the guide: https://docs.masumi.network/get-started/installation/option-1-recommended-using-masumi-services-docker-compose-setup
 
 ## Services
 
