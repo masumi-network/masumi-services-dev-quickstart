@@ -15,8 +15,13 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "npm run prisma:migrate && npm run prisma:seed && npm start"
-
+      sh -c '
+        until bash -c "</dev/tcp/postgres/5432" 2>/dev/null; do
+          echo "Waiting for postgres...";
+          sleep 2;
+        done;
+        npm run prisma:migrate && npm run prisma:seed && npm start
+      '
     networks:
       - masumi-network
     restart: unless-stopped
@@ -36,7 +41,13 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "npm run prisma:migrate && npm run prisma:seed && npm start"
+      sh -c '
+        until bash -c "</dev/tcp/postgres/5432" 2>/dev/null; do
+          echo "Waiting for postgres...";
+          sleep 2;
+        done;
+        npm run prisma:migrate && npm run prisma:seed && npm start
+      '
     networks:
       - masumi-network
     restart: unless-stopped
