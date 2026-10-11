@@ -1,11 +1,20 @@
-version: "3.8"
-
 services:
-  registry-service:
-    image: ghcr.io/masumi-network/masumi-registry-service:0.22.0
-    container_name: masumi-registry-service
-    ports:
-      - "3000:3000"
+  # The registry-service image (0.26.0 and later) is a pruned production image.
+  # It runs as a non-root user and does not include the Prisma schema, the
+  # migrations or the seed script. This one-shot service builds the same release
+  # from source, applies the migrations, seeds the database and then exits.
+  registry-setup:
+    build:
+      context: https://github.com/masumi-network/masumi-registry-service.git#0.26.0
+      dockerfile_inline: |
+        FROM node:20-slim
+        RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+        RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+        WORKDIR /usr/src/app
+        COPY . .
+        RUN pnpm install --frozen-lockfile && pnpm run prisma:generate
+    image: masumi-registry-setup:0.26.0
+    container_name: masumi-registry-setup
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres-registry:5432/postgres?schema=public
       - ADMIN_KEY=${ADMIN_KEY}
@@ -14,39 +23,82 @@ services:
     depends_on:
       postgres-registry:
         condition: service_healthy
-    command: >
-      sh -c "apt-get update && apt-get install -y curl && npm run prisma:migrate && npm run prisma:seed && npm start"
+    command: sh -c "pnpm run prisma:migrate && pnpm run prisma:seed"
+    networks:
+      - masumi-network-registry
+    restart: "no"
 
+  registry-service:
+    image: ghcr.io/masumi-network/masumi-registry-service:0.26.0
+    container_name: masumi-registry-service
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-registry:5432/postgres?schema=public
+    depends_on:
+      registry-setup:
+        condition: service_completed_successfully
     networks:
       - masumi-network-registry
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # The payment-service image (0.29.0) cannot seed: it does not include the
+  # workspace packages that the seed script imports. This one-shot service
+  # builds the same release from source, applies the migrations, seeds the
+  # database and then exits.
+  payment-setup:
+    build:
+      context: https://github.com/masumi-network/masumi-payment-service.git#0.29.0
+      dockerfile_inline: |
+        FROM node:20-slim
+        RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+        RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
+        WORKDIR /usr/src/app
+        COPY . .
+        RUN pnpm install --frozen-lockfile
+    image: masumi-payment-setup:0.29.0
+    container_name: masumi-payment-setup
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-payment:5432/postgres?schema=public
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ADMIN_KEY=${ADMIN_KEY}
+      - BLOCKFROST_API_KEY_PREPROD=${BLOCKFROST_API_KEY_PREPROD}
+      - PURCHASE_WALLET_PREPROD_MNEMONIC=${PURCHASE_WALLET_PREPROD_MNEMONIC:-}
+      - SELLING_WALLET_PREPROD_MNEMONIC=${SELLING_WALLET_PREPROD_MNEMONIC:-}
+      - COLLECTION_WALLET_PREPROD_ADDRESS=${COLLECTION_WALLET_PREPROD_ADDRESS:-}
+      - SEED_ONLY_IF_EMPTY=TRUE
+    depends_on:
+      postgres-payment:
+        condition: service_healthy
+    command: sh -c "pnpm run prisma:migrate && pnpm run prisma:seed"
+    networks:
+      - masumi-network-payment
+    restart: "no"
+
   payment-service:
-    image: ghcr.io/masumi-network/masumi-payment-service:0.22.0
+    image: ghcr.io/masumi-network/masumi-payment-service:0.29.0
     container_name: masumi-payment-service
     ports:
       - "3001:3001"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres-payment:5432/postgres?schema=public
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - ADMIN_KEY=${ADMIN_KEY}
-      - BLOCKFROST_API_KEY_PREPROD=${BLOCKFROST_API_KEY_PREPROD}
-      - SEED_ONLY_IF_EMPTY=TRUE
     depends_on:
-      postgres-payment:
-        condition: service_healthy
-    command: >
-      sh -c "apt-get update && apt-get install -y curl && npm run prisma:migrate && npm run prisma:seed && npm start"
+      payment-setup:
+        condition: service_completed_successfully
+    # The image's default command (pnpm run start) tries to download the pnpm
+    # version pinned in package.json and fails, so start the server directly.
+    command: ["node", "./dist/index.js"]
     networks:
       - masumi-network-payment
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/health"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5

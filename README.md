@@ -1,31 +1,38 @@
 # Masumi Services Docker Compose Setup
 
-This repository contains a Docker Compose configuration to run both the Masumi Registry Service and Masumi Payment Service together and configure the databases
+This repository contains a Docker Compose configuration that runs the Masumi Registry Service and the Masumi Payment Service together on the Cardano Preprod network. It also starts one PostgreSQL database for each service.
+
+| Component        | Version |
+| ---------------- | ------- |
+| Payment Service  | 0.29.0  |
+| Registry Service | 0.26.0  |
+| PostgreSQL       | 15      |
 
 ## Prerequisites
 
-- Docker and Docker Compose installed
-- A Blockfrost API key (get one from [blockfrost.io](https://blockfrost.io))
+- Docker with Docker Compose v2.20 or later (the setup services use `dockerfile_inline`)
+- A Blockfrost API key for the Preprod network (get one from [blockfrost.io](https://blockfrost.io)). The payment service seed stops without it.
+- Network access to GitHub and the npm registry for the first start
 
 ## Setup Instructions
 
-1. Copy the environment file template and fill in your values:
+1. Copy the environment file template:
 
    ```bash
    cp .env.example .env
    ```
 
-2. Edit the `.env` file and set the following variables:
+2. Edit the `.env` file and set these variables:
 
-   - `ADMIN_KEY`: A minimum 15-character secure admin key for both services
-   - `ENCRYPTION_KEY`: A minimum 20-character encryption key for the payment service database
-   - `BLOCKFROST_API_KEY_PREPROD`: Your Blockfrost API key for preprod network
+   - `ADMIN_KEY`: The admin key for both services. Use at least 15 characters.
+   - `ENCRYPTION_KEY`: The key that encrypts the wallet secrets in the payment service database. The service requires at least 20 characters. We recommend 32 or more, for example the output of `openssl rand -hex 32`. Do not change it after the first start, because the service cannot decrypt the stored wallets with a different key.
+   - `BLOCKFROST_API_KEY_PREPROD`: Your Blockfrost API key for the Preprod network.
 
-   **Optionally**
+   **Optional**
 
-   - `PURCHASE_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet used to purchase any agent requests. This needs to have sufficient funds to pay, or be topped up. If you do not provide a mnemonic, a new one will be generated. Please ensure you export them immediately after creation and store them securely.
-   - `SELLING_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet used to interact with the smart contract. This only needs minimal funds, to cover the CARDANO Network fees. If you do not provide a mnemonic, a new one will be generated. Please ensure you export them immediately after creation and store them securely.
-   - `COLLECTION_WALLET_PREPROD_ADDRESS`: The wallet address of the collection wallet. It will receive all payments after a successful and completed purchase (not refund). It does not need any funds, however it is strongly recommended to create it via a hardware wallet or ensure its secret is stored securely. If you do not provide an address, the SELLING_WALLET will be used.
+   - `PURCHASE_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet that pays for agent requests. This wallet must have sufficient funds or you must top it up. If you do not set it, the seed generates a new mnemonic.
+   - `SELLING_WALLET_PREPROD_MNEMONIC`: The mnemonic of the wallet that interacts with the smart contract. It only needs a small amount of funds for the Cardano network fees. If you do not set it, the seed generates a new mnemonic.
+   - `COLLECTION_WALLET_PREPROD_ADDRESS`: The address that receives all payments after a successful purchase (not a refund). It does not need funds. We strongly recommend a hardware wallet for it. If you do not set it, the seed uses the selling wallet.
 
 3. Start the services:
 
@@ -33,64 +40,76 @@ This repository contains a Docker Compose configuration to run both the Masumi R
    docker compose up -d
    ```
 
-   The services will automatically:
+   The first start builds two setup images from the release source code on GitHub. This takes some minutes. Later starts use the built images.
 
-   - Create the required databases
-   - Run database migrations
-   - Seed the databases (only if they are empty)
-   - Start the services
+   On each start, the services do these steps:
+
+   - `registry-setup` and `payment-setup` apply the database migrations and seed the databases. They seed only empty databases. Then they stop.
+   - `registry-service` and `payment-service` start after their setup service completes successfully.
+
+4. If you did not set the wallet mnemonics, read them from the payment setup log and store them securely now:
+
+   ```bash
+   docker logs masumi-payment-setup
+   ```
+
+   The log shows the generated mnemonics only after the first seed.
+
+To see the status of the services, run `docker compose ps -a`. The two setup services show `Exited (0)` when they completed successfully.
 
 ## Services
 
-- Registry Service: Available at http://localhost:3000/docs (for Open-API)
-- Payment Service: Available at http://localhost:3001/docs (for Open-API) or http://localhost:3001/admin (for an admin dashboard)
-- PostgreSQL: Available at localhost:5432
+- Registry Service: http://localhost:3000/docs (OpenAPI)
+- Payment Service: http://localhost:3001/docs (OpenAPI) or http://localhost:3001/admin (admin dashboard)
+- Registry database: `localhost:5432`
+- Payment database: `localhost:5433`
+
+If PostgreSQL already runs on your computer, port 5432 is not available. Change the host port of `postgres-registry` in `docker-compose.yml`, for example to `"5434:5432"`.
+
+## Why the setup services exist
+
+The published images contain only what the services need at runtime:
+
+- The registry service image runs as a non-root user and does not include the Prisma schema, the migrations or the seed script.
+- The payment service image does not include the workspace packages that the seed script imports.
+
+Thus the setup services build the same release tag from source and run the migrations and the seed from there. The `payment-service` also starts with `node ./dist/index.js` directly, because the default image command (`pnpm run start`) tries to download a different pnpm version and fails in the container.
 
 ## Database Credentials
 
-- Username: postgres
-- Password: postgres
-- Databases: masumi_registry, masumi_payment
+- Username: `postgres`
+- Password: `postgres`
+- Database: `postgres` (one PostgreSQL container for each service)
 
 ## Data Persistence
 
-The setup includes several features to ensure data persistence:
+1. **Named volumes**:
 
-1. **Named Volume**:
+   - The registry data is in the volume `masumi_postgres_data_registry`.
+   - The payment data is in the volume `masumi_postgres_data_payment`.
+   - The volumes stay when you remove the containers. The data stays after restarts and updates.
 
-   - Database data is stored in a named volume `masumi_postgres_data`
-   - This volume persists even when containers are removed
-   - Data survives container restarts and updates
+2. **Automatic restart**:
 
-2. **Automatic Restart**:
+   - The services and the databases use `restart: unless-stopped`.
+   - Docker restarts them after a crash and after a system reboot.
 
-   - All services are configured with `restart: unless-stopped`
-   - Services will automatically restart if they crash
-   - Services will restart when the system reboots
-
-3. **Database Initialization**:
-   - Existing data is preserved during container restarts
-   - Seeding only occurs on empty databases
-
-## Database Migration and Seeding
-
-The services automatically handle database setup:
-
-1. The PostgreSQL database is initialized with the required databases
-2. Prisma migrations are run automatically
-3. The seeding script checks if each database is empty:
-   - If empty, it runs the seed script
-   - If not empty, it skips seeding, therefore preserving existing data. If you want to reset, remove the volumes and start the services again.
-4. The services start and is ready to use
+3. **Seeding**:
+   - The seed runs only on empty databases. A restart keeps the existing data.
+   - To reset the data, remove the volumes (see below) and start the services again.
 
 ## Managing Data
 
 ### Backup
 
-To backup your database:
+To back up the databases:
 
 ```bash
-docker exec masumi-postgres pg_dumpall -U postgres > backup.sql
+docker exec masumi-postgres-registry pg_dumpall -U postgres > backup-registry.sql
+```
+
+```bash
+docker exec masumi-postgres-payment pg_dumpall -U postgres > backup-payment.sql
 ```
 
 ### Restore
@@ -98,18 +117,32 @@ docker exec masumi-postgres pg_dumpall -U postgres > backup.sql
 To restore from a backup:
 
 ```bash
-cat backup.sql | docker exec -i masumi-postgres psql -U postgres
+cat backup-registry.sql | docker exec -i masumi-postgres-registry psql -U postgres
 ```
+
+```bash
+cat backup-payment.sql | docker exec -i masumi-postgres-payment psql -U postgres
+```
+
+## Updating to a New Release
+
+1. Change the image tags of `registry-service` and `payment-service` in `docker-compose.yml`.
+2. Change the tag in the `build.context` URL and in the `image` name of `registry-setup` and `payment-setup` to the same versions.
+3. Rebuild and start the services. The setup services apply the new migrations.
+
+   ```bash
+   docker compose up -d --build
+   ```
 
 ## Stopping the Services
 
-To stop all services (data is preserved):
+To stop all services (the data stays):
 
 ```bash
 docker compose down
 ```
 
-To stop and remove volumes (this will delete all data):
+To stop the services and remove the volumes (this deletes all data, including the encrypted wallets):
 
 ```bash
 docker compose down -v
