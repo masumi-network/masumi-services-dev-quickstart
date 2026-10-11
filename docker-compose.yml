@@ -23,7 +23,11 @@ services:
     depends_on:
       postgres-registry:
         condition: service_healthy
-    command: sh -c "pnpm run prisma:migrate && pnpm run prisma:seed"
+    # The registry seed stores an empty Blockfrost key and never updates it,
+    # so stop before seeding when the key is missing.
+    command: >
+      sh -c "test -n \"$$BLOCKFROST_API_KEY_PREPROD\" || { echo 'BLOCKFROST_API_KEY_PREPROD is not set in .env'; exit 1; } &&
+      pnpm run prisma:migrate && pnpm run prisma:seed"
     networks:
       - masumi-network-registry
     restart: "no"
