@@ -39,6 +39,7 @@ services:
       - "3000:3000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres-registry:5432/postgres?schema=public
+      - UPDATE_CARDANO_REGISTRY_INTERVAL=${UPDATE_CARDANO_REGISTRY_INTERVAL:-20}
     depends_on:
       registry-setup:
         condition: service_completed_successfully
@@ -92,6 +93,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres-payment:5432/postgres?schema=public
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BLOCK_CONFIRMATIONS_THRESHOLD=${BLOCK_CONFIRMATIONS_THRESHOLD:-0}
+      - CHECK_TX_INTERVAL=${CHECK_TX_INTERVAL:-15}
     depends_on:
       payment-setup:
         condition: service_completed_successfully
